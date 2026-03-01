@@ -3,38 +3,14 @@
 @tailwind utilities;
 
 :root {
-  --bg-base: #020617;
-  --bg-panel: rgba(15, 23, 42, 0.45);
-  --bg-panel-strong: rgba(2, 6, 23, 0.8);
-  --border-glass: rgba(51, 65, 85, 0.6);
-  --text-primary: #e2e8f0;
-  --text-muted: #94a3b8;
-  --ring-primary: rgba(56, 189, 248, 0.7);
+  color-scheme: dark;
 }
 
-* {
-  @apply border-slate-700/50;
+html,
+body {
+  @apply bg-slate-950 text-slate-100;
 }
 
 body {
-  @apply min-h-screen bg-slate-950 text-slate-100 antialiased;
-  background-image:
-    radial-gradient(circle at 15% 20%, rgba(14, 165, 233, 0.18), transparent 40%),
-    radial-gradient(circle at 85% 10%, rgba(45, 212, 191, 0.14), transparent 36%),
-    linear-gradient(to bottom, #020617, #020617);
-  background-attachment: fixed;
-}
-
-@layer components {
-  .glass-card {
-    @apply rounded-2xl border border-slate-700/50 bg-slate-900/45 p-4 shadow-[0_12px_40px_rgba(2,6,23,0.45)] backdrop-blur-xl md:p-6 xl:p-8;
-  }
-
-  .glass-panel {
-    @apply rounded-2xl border border-slate-700/60 bg-slate-950/80 p-3 backdrop-blur-lg md:p-4;
-  }
-
-  .log-stream-panel {
-    @apply rounded-2xl border border-slate-700/60 bg-slate-950/80 p-3 backdrop-blur-lg md:p-4 h-[320px] md:h-[420px] overflow-y-auto font-mono text-xs leading-5 text-slate-200 shadow-inner shadow-slate-950/60;
-  }
+  @apply font-sans antialiased;
 }
