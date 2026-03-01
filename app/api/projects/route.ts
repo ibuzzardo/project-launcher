@@ -1,29 +1,24 @@
-import { NextResponse } from "next/server";
+import { z, ZodError } from "zod";
 
-import { createErrorResponse } from "@/lib/server/error-response";
-import { inMemoryProjectStore } from "@/lib/store/in-memory-project-store";
-import type { ApiProjectResponse } from "@/lib/types/project";
-import { createProjectSchema } from "@/lib/validation/project-schemas";
+import { fromUnknownError, fromZodError, ok } from "@/lib/http/response";
+import { projectStore } from "@/lib/store/in-memory-project-store";
 
-export async function POST(request: Request): Promise<NextResponse<ApiProjectResponse>> {
+const createProjectSchema = z.object({
+  projectName: z.string().trim().min(1, "Project name is required"),
+  repositoryUrl: z.string().url("Repository URL must be a valid URL"),
+  branch: z.string().trim().min(1, "Branch is required")
+});
+
+export async function POST(request: Request): Promise<Response> {
   try {
-    let rawBody: unknown;
-
-    try {
-      rawBody = await request.json();
-    } catch {
-      return createErrorResponse(400, "INVALID_JSON", "Request body must be valid JSON") as NextResponse<ApiProjectResponse>;
+    const body = await request.json();
+    const parsed = createProjectSchema.parse(body);
+    const createdBuild = projectStore.createBuild(parsed);
+    return ok(createdBuild, 201);
+  } catch (error: unknown) {
+    if (error instanceof ZodError) {
+      return fromZodError(error);
     }
-
-    const parsed = createProjectSchema.safeParse(rawBody);
-    if (!parsed.success) {
-      const details = parsed.error.issues.map((issue): string => issue.message);
-      return createErrorResponse(400, "VALIDATION_ERROR", "Invalid project launch request", details) as NextResponse<ApiProjectResponse>;
-    }
-
-    const build = inMemoryProjectStore.createBuild(parsed.data);
-    return NextResponse.json({ data: build }, { status: 201 });
-  } catch {
-    return createErrorResponse(500, "INTERNAL_ERROR", "Unexpected error while creating project") as NextResponse<ApiProjectResponse>;
+    return fromUnknownError(error);
   }
 }

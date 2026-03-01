@@ -1,111 +1,192 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Card } from "@/components/ui/card";
-import { LogStream } from "@/components/project-launcher/log-stream";
 import { cn } from "@/lib/utils";
-import type { BuildRecord } from "@/lib/types/project";
 
-interface BuildStatusClientProps {
-  initialBuild: BuildRecord;
+type BuildStatus = "queued" | "running" | "success" | "failed";
+
+interface BuildLog {
+  id: string;
+  message: string;
+  level: "info" | "warn" | "error";
+  createdAt: string;
 }
 
-export function BuildStatusClient({ initialBuild }: BuildStatusClientProps): JSX.Element {
-  const [build, setBuild] = useState<BuildRecord>(initialBuild);
-  const retryRef = useRef<number>(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+interface BuildSnapshot {
+  id: string;
+  status: BuildStatus;
+  progress: number;
+  logs: BuildLog[];
+}
 
-  useEffect((): (() => void) => {
-    let closed = false;
-    let source: EventSource | null = null;
+interface BuildStatusClientProps {
+  buildId: string;
+}
 
-    const connect = (): void => {
-      if (closed) {
+interface RetryState {
+  attempt: number;
+  isReconnecting: boolean;
+}
+
+function parseEventData<T>(data: string): T | null {
+  try {
+    return JSON.parse(data) as T;
+  } catch {
+    return null;
+  }
+}
+
+function getBackoffDelayMs(attempt: number): number {
+  const baseMs = 500;
+  const maxMs = 10000;
+  const next = baseMs * 2 ** Math.max(0, attempt - 1);
+  return Math.min(next, maxMs);
+}
+
+export function BuildStatusClient({ buildId }: BuildStatusClientProps): JSX.Element {
+  const [snapshot, setSnapshot] = useState<BuildSnapshot | null>(null);
+  const [retryState, setRetryState] = useState<RetryState>({
+    attempt: 0,
+    isReconnecting: false
+  });
+
+  const sourceRef = useRef<EventSource | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closedRef = useRef<boolean>(false);
+
+  const statusTone = useMemo((): string => {
+    const status = snapshot?.status ?? "queued";
+    if (status === "success") {
+      return "bg-secondary/10 text-secondary ring-secondary/20";
+    }
+    if (status === "failed") {
+      return "bg-destructive/10 text-destructive ring-destructive/20";
+    }
+    if (status === "running") {
+      return "bg-primary/10 text-primary ring-primary/20";
+    }
+    return "bg-muted text-foreground ring-foreground/15";
+  }, [snapshot?.status]);
+
+  const closeSource = useCallback((): void => {
+    if (sourceRef.current) {
+      sourceRef.current.close();
+      sourceRef.current = null;
+    }
+  }, []);
+
+  const clearReconnectTimer = useCallback((): void => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const connect = useCallback((): void => {
+    if (closedRef.current) {
+      return;
+    }
+
+    closeSource();
+
+    const source = new EventSource(`/api/projects/${buildId}/events`);
+    sourceRef.current = source;
+
+    source.addEventListener("snapshot", (event: MessageEvent<string>): void => {
+      const data = parseEventData<BuildSnapshot>(event.data);
+      if (!data) {
+        return;
+      }
+      setSnapshot(data);
+      setRetryState({ attempt: 0, isReconnecting: false });
+    });
+
+    source.addEventListener("build", (event: MessageEvent<string>): void => {
+      const data = parseEventData<BuildSnapshot>(event.data);
+      if (!data) {
+        return;
+      }
+      setSnapshot(data);
+    });
+
+    source.addEventListener("error", (): void => {
+      if (closedRef.current) {
         return;
       }
 
-      source = new EventSource(`/api/projects/${initialBuild.id}/events`);
+      closeSource();
 
-      source.addEventListener("build.updated", (event: MessageEvent<string>): void => {
-        try {
-          const parsed = JSON.parse(event.data) as BuildRecord;
-          setBuild(parsed);
-          retryRef.current = 0;
-        } catch {
-          // ignore malformed event payloads
-        }
-      });
-
-      source.onerror = (): void => {
-        if (closed) {
-          return;
-        }
-
-        source?.close();
-        const attempt = retryRef.current + 1;
-        retryRef.current = attempt;
-        const delay = Math.min(1000 * 2 ** attempt, 30000);
-
-        timerRef.current = setTimeout((): void => {
+      setRetryState((current): RetryState => {
+        const nextAttempt = current.attempt + 1;
+        const delayMs = getBackoffDelayMs(nextAttempt);
+        clearReconnectTimer();
+        reconnectTimerRef.current = setTimeout((): void => {
           connect();
-        }, delay);
-      };
-    };
+        }, delayMs);
 
+        return {
+          attempt: nextAttempt,
+          isReconnecting: true
+        };
+      });
+    });
+
+    source.onopen = (): void => {
+      setRetryState({ attempt: 0, isReconnecting: false });
+      clearReconnectTimer();
+    };
+  }, [buildId, clearReconnectTimer, closeSource]);
+
+  useEffect((): (() => void) => {
+    closedRef.current = false;
     connect();
 
     return (): void => {
-      closed = true;
-      if (timerRef.current) {
-        clearTimeout(timerRef.current);
-      }
-      source?.close();
+      closedRef.current = true;
+      clearReconnectTimer();
+      closeSource();
     };
-  }, [initialBuild.id]);
-
-  const statusTone = useMemo((): string => {
-    if (build.status === "success") {
-      return "bg-emerald-500/20 text-emerald-300 ring-emerald-400/40";
-    }
-    if (build.status === "failed") {
-      return "bg-rose-500/20 text-rose-300 ring-rose-400/40";
-    }
-    if (build.status === "running") {
-      return "bg-cyan-500/20 text-cyan-300 ring-cyan-400/40";
-    }
-    return "bg-slate-500/20 text-slate-300 ring-slate-400/40";
-  }, [build.status]);
+  }, [clearReconnectTimer, closeSource, connect]);
 
   return (
-    <section className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-      <aside className="xl:col-span-4 space-y-4">
-        <Card>
-          <h2 className="text-lg font-semibold">{build.projectName}</h2>
-          <p className="text-sm text-slate-300 mt-1 break-all">{build.repositoryUrl}</p>
-          <p className="text-sm text-slate-400 mt-1">Branch: {build.branch}</p>
-        </Card>
+    <div className="space-y-3">
+      {retryState.isReconnecting ? (
+        <div className="w-full rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+          Connection lost. Reconnecting...
+        </div>
+      ) : null}
 
-        <Card>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-slate-300">Status</span>
-            <span className={cn("inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium ring-1 transition-colors", statusTone)}>
-              {build.status.toUpperCase()}
-            </span>
-          </div>
-          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-slate-800/90">
-            <div className="h-full rounded-full bg-cyan-400 transition-all" style={{ width: `${build.progress}%` }} />
-          </div>
-          <p className="mt-2 text-xs text-slate-400">{build.progress}% complete</p>
-        </Card>
-      </aside>
+      <div className="glass-surface p-4 sm:p-6">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-lg font-semibold">Build Status</h3>
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset transition-colors",
+              statusTone
+            )}
+          >
+            {(snapshot?.status ?? "queued").toUpperCase()}
+          </span>
+        </div>
 
-      <div className="xl:col-span-8">
-        <Card>
-          <h3 className="text-sm font-medium text-slate-300 mb-3">Live Logs</h3>
-          <LogStream logs={build.logs} />
-        </Card>
+        <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full bg-primary transition-all duration-300"
+            style={{ width: `${snapshot?.progress ?? 0}%` }}
+          />
+        </div>
+
+        <div className="mt-4 max-h-64 space-y-2 overflow-y-auto rounded-lg border border-white/50 bg-white/50 p-3">
+          {(snapshot?.logs ?? []).slice(-8).map((entry): JSX.Element => {
+            return (
+              <p key={entry.id} className="text-xs text-foreground/80">
+                {entry.message}
+              </p>
+            );
+          })}
+        </div>
       </div>
-    </section>
+    </div>
   );
 }

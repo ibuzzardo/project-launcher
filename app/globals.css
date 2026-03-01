@@ -2,15 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
+@layer base {
+  :root {
+    --background: #F8FAFC;
+    --foreground: #0F172A;
+    --primary: #2563EB;
+    --secondary: #0F766E;
+    --muted: #E2E8F0;
+    --accent: #D97706;
+    --destructive: #DC2626;
+    --chart-1: #2563EB;
+    --chart-2: #0F766E;
+    --chart-3: #7C3AED;
+    --chart-4: #D97706;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
 }
 
-html,
-body {
-  @apply bg-slate-950 text-slate-100;
-}
+@layer utilities {
+  .glass-surface {
+    @apply rounded-xl border border-white/40 bg-white/70 shadow-[0_8px_30px_rgb(15_23_42/0.12)] backdrop-blur-xl supports-[backdrop-filter]:bg-white/60;
+  }
 
-body {
-  @apply font-sans antialiased;
+  .glass-header {
+    @apply border-b border-slate-200/70 bg-white/80 backdrop-blur-lg;
+  }
+
+  .glass-highlight {
+    background-image: radial-gradient(circle at 20% 20%, rgb(37 99 235 / 0.14), transparent 46%),
+      radial-gradient(circle at 80% 0%, rgb(15 118 110 / 0.12), transparent 35%);
+  }
 }
